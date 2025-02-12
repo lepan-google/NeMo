@@ -14,7 +14,6 @@
 
 import itertools
 import os
-import time
 import queue
 import warnings
 from contextlib import nullcontext
@@ -1640,13 +1639,7 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
 
         resume_checkpoint_path = self.trainer.ckpt_path
         if resume_checkpoint_path and not self.continue_training:
-            logging.info(
-                f'Extract consumed samples from ckpt {resume_checkpoint_path} starts at {time.time()} - logging'
-            )
             init_consumed_samples = self._extract_consumed_samples_from_ckpt(resume_checkpoint_path)
-            logging.info(
-                f'Extract consumed samples from ckpt {resume_checkpoint_path} ends at {time.time()} - logging'
-            )
         else:
             init_consumed_samples = 0
         self.init_consumed_samples = init_consumed_samples
