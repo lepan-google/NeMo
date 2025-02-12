@@ -1,0 +1,250 @@
+diff --git a/Dockerfile.ci b/Dockerfile.ci
+index 07b0c6a0a..9c726c30a 100644
+--- a/Dockerfile.ci
++++ b/Dockerfile.ci
+@@ -18,14 +18,14 @@ ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.02-py3
+ 
+ FROM ${BASE_IMAGE}
+ 
+-ENV TRANSFORMERS_OFFLINE=0 
++ENV TRANSFORMERS_OFFLINE=0
+ ENV HYDRA_FULL_ERROR=1
+ ENV PYTHONUNBUFFERED=1
+ 
+ # APT packages
+ RUN <<"EOF" bash -ex
+ apt-get update
+-apt-get install -y bc libsox-fmt-all -y 
++apt-get install -y bc libsox-fmt-all -y
+ apt-get clean
+ EOF
+ 
+diff --git a/examples/nlp/language_modeling/megatron_gpt_pretraining.py b/examples/nlp/language_modeling/megatron_gpt_pretraining.py
+index 422319a38..8aca0c4e3 100644
+--- a/examples/nlp/language_modeling/megatron_gpt_pretraining.py
++++ b/examples/nlp/language_modeling/megatron_gpt_pretraining.py
+@@ -17,6 +17,7 @@ from pathlib import Path
+ 
+ # To suppress BF16 compile related issue in the CI runs with turing/V100
+ import torch._dynamo
++import time
+ import torch.multiprocessing as mp
+ from omegaconf.omegaconf import OmegaConf, open_dict
+ 
+@@ -44,23 +45,59 @@ def main(cfg) -> None:
+     if cfg.model.get("restore_from_path") is not None:
+         # Option 1: Restore only the model weights from a .nemo file
+         logging.info(f"Continual training: loading weights from {cfg.model.restore_from_path}")
++        logging.info(
++            f'Checkpoint load from path {cfg.model.restore_from_path} starts at {time.time()} - logging'
++        )
++        print(
++            f'Checkpoint load from path {cfg.model.restore_from_path} starts at {time.time()} - print'
++        )
+         model = MegatronGPTModel.restore_from(
+             restore_path=cfg.model.restore_from_path,
+             override_config_path=cfg.model,
+             trainer=trainer,
+             save_restore_connector=NLPSaveRestoreConnector(),
+         )
++        logging.info(
++            f'Checkpoint load from path {cfg.model.restore_from_path} ends at {time.time()} - logging'
++        )
++        print(
++            f'Checkpoint load from path {cfg.model.restore_from_path} ends at {time.time()} - print'
++        )
+     elif cfg.model.get("restore_from_ckpt") is not None:
+         # Option 2: Restore both model weights and optimizer states from a PTL checkpoint
+         logging.info(f"Continual training: loading weights and optimizer states from {cfg.model.restore_from_ckpt}")
++        logging.info(
++            f'Checkpoint load from ckpt {cfg.model.restore_from_ckpt} starts at {time.time()} - logging'
++        )
++        print(
++            f'Checkpoint load from ckpt {cfg.model.restore_from_ckpt} starts at {time.time()} - print'
++        )
+         trainer.ckpt_path = Path(cfg.model.restore_from_ckpt)
+         model = MegatronGPTModel(cfg.model, trainer)
++        logging.info(
++            f'Checkpoint load from ckpt {cfg.model.restore_from_ckpt} ends at {time.time()} - logging'
++        )
++        print(
++            f'Checkpoint load from ckpt {cfg.model.restore_from_ckpt} ends at {time.time()} - print'
++        )
+ 
+     # Start new pretraining or resume from a checkpoint if it exists
+     else:
+         model = MegatronGPTModel(cfg.model, trainer)
+ 
++    logging.info(
++        f'Training starts at {time.time()} - logging'
++    )
++    print(
++        f'Training starts at {time.time()} - print'
++    )
+     trainer.fit(model)
++    logging.info(
++        f'Training ends at {time.time()} - logging'
++    )
++    print(
++        f'Training ends at {time.time()} - print'
++    )
+ 
+ 
+ if __name__ == '__main__':
+diff --git a/nemo/collections/nlp/models/language_modeling/megatron_gpt_model.py b/nemo/collections/nlp/models/language_modeling/megatron_gpt_model.py
+index 755d67e12..c2c08de7b 100644
+--- a/nemo/collections/nlp/models/language_modeling/megatron_gpt_model.py
++++ b/nemo/collections/nlp/models/language_modeling/megatron_gpt_model.py
+@@ -14,6 +14,7 @@
+ 
+ import itertools
+ import os
++import time
+ import queue
+ import warnings
+ from contextlib import nullcontext
+@@ -1639,7 +1640,19 @@ class MegatronGPTModel(MegatronBaseModel, TextGeneration):
+ 
+         resume_checkpoint_path = self.trainer.ckpt_path
+         if resume_checkpoint_path and not self.continue_training:
++            logging.info(
++                f'Extract consumed samples from ckpt {resume_checkpoint_path} starts at {time.time()} - logging'
++            )
++            print(
++                f'Extract consumed samples from ckpt {resume_checkpoint_path} starts at {time.time()} - print'
++            )
+             init_consumed_samples = self._extract_consumed_samples_from_ckpt(resume_checkpoint_path)
++            logging.info(
++                f'Extract consumed samples from ckpt {resume_checkpoint_path} ends at {time.time()} - logging'
++            )
++            print(
++                f'Extract consumed samples from ckpt {resume_checkpoint_path} ends at {time.time()} - print'
++            )
+         else:
+             init_consumed_samples = 0
+         self.init_consumed_samples = init_consumed_samples
+diff --git a/nemo/core/connectors/save_restore_connector.py b/nemo/core/connectors/save_restore_connector.py
+index 23b38510b..c1c557d73 100644
+--- a/nemo/core/connectors/save_restore_connector.py
++++ b/nemo/core/connectors/save_restore_connector.py
+@@ -22,6 +22,7 @@ import uuid
+ from typing import Optional, Set, Union
+ 
+ import torch
++import time
+ from omegaconf import DictConfig, OmegaConf
+ from omegaconf.omegaconf import open_dict
+ from pytorch_lightning.trainer.trainer import Trainer
+@@ -254,6 +255,12 @@ class SaveRestoreConnector:
+         """
+         # Get path where the command is executed - the artifacts will be "retrieved" there
+         # (original .nemo behavior)
++        logging.info(
++            f'Connector restores from {restore_path} starts at {time.time()} - logging'
++        )
++        print(
++            f'Connector restores from {restore_path} starts at {time.time()} - print'
++        )
+         loaded_params = self.load_config_and_state_dict(
+             calling_cls,
+             restore_path,
+@@ -270,6 +277,12 @@ class SaveRestoreConnector:
+         state_dict = self.modify_state_dict(conf, state_dict)
+         self.load_instance_with_state_dict(instance, state_dict, strict)
+         logging.info(f'Model {instance.__class__.__name__} was successfully restored from {restore_path}.')
++        logging.info(
++            f'Connector restores from {restore_path} ends at {time.time()} - logging'
++        )
++        print(
++            f'Connector restores from {restore_path} ends at {time.time()} - print'
++        )
+         return instance
+ 
+     def extract_state_dict_from(self, restore_path: str, save_dir: str, split_by_module: bool = False):
+diff --git a/nemo/utils/callbacks/dist_ckpt_io.py b/nemo/utils/callbacks/dist_ckpt_io.py
+index 091075488..eedf99b42 100644
+--- a/nemo/utils/callbacks/dist_ckpt_io.py
++++ b/nemo/utils/callbacks/dist_ckpt_io.py
+@@ -126,8 +126,11 @@ class AsyncFinalizableCheckpointIO(_WrappingCheckpointIO):
+         Applies underlying checkpoint_io finalize callback first, then the external one (postfix order).
+         """
+         external_finalize_fn = (storage_options or {}).pop('finalize_fn', None)
++        # external_setup_fn = (storage_options or {}).pop('setup_fn', None)
+         assert isinstance(self.checkpoint_io, AsyncCompatibleCheckpointIO), type(self.checkpoint_io)
+         async_request = self.checkpoint_io.save_checkpoint(checkpoint, path, storage_options)
++        # if external_setup_fn is not None:
++        #     async_request.setup_fn = external_setup_fn
+         if external_finalize_fn is not None:
+             async_request.add_finalize_fn(external_finalize_fn)
+         call_idx = self.async_calls_queue.schedule_async_request(async_request)
+diff --git a/nemo/utils/callbacks/nemo_model_checkpoint.py b/nemo/utils/callbacks/nemo_model_checkpoint.py
+index 9893b0806..24fe31cab 100644
+--- a/nemo/utils/callbacks/nemo_model_checkpoint.py
++++ b/nemo/utils/callbacks/nemo_model_checkpoint.py
+@@ -15,6 +15,7 @@
+ import os
+ import re
+ import shutil
++import time
+ from copy import deepcopy
+ from pathlib import Path
+ from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+@@ -457,22 +458,42 @@ class NeMoModelCheckpoint(ModelCheckpoint):
+         else:
+             # Async save passed the finalization function to checkpoint_io,
+             # sync save calls the finalization function immediately after save.
++            # setup_fn = self._get_setup_save_checkpoint_callback(
++            #     trainer.global_step)
+             finalize_fn = self._get_finalize_save_checkpoint_callback(trainer, filepath, trainer.global_step)
+             if self.async_save:
+                 checkpoint_io = trainer.strategy.checkpoint_io
+                 if not isinstance(checkpoint_io, AsyncFinalizableCheckpointIO):
+                     raise ValueError('Async save requires async compatible CheckpointIO')
+                 storage_options = dict(finalize_fn=finalize_fn)
++                # storage_options = dict(
++                #     finalize_fn=finalize_fn, setup_fn=setup_fn)
+                 # Each upcoming ckpt removal request will be executed as part of this save finalization
+                 self.deferred_ckpts_to_remove.append([])
+             else:
+                 storage_options = None
++            logging.info(
++                f'Checkpoint async save for step {trainer.global_step} starts at {time.time()}. - logging'
++            )
++            print(
++                f'Checkpoint async save for step {trainer.global_step} starts at {time.time()}. - print'
++            )
+             trainer.save_checkpoint(filepath, self.save_weights_only, storage_options=storage_options)
+             if self.async_save:
+                 logging.info(f'Scheduled async checkpoint save for {filepath}')
+             else:
+                 finalize_fn()
+ 
++    # def _get_setup_save_checkpoint_callback(self, global_step: int):
++    #     def _cb():
++    #         logging.info(
++    #             f'Checkpoint async save setup for step {global_step} starts at {time.time()}. - logging'
++    #         )
++    #         print(
++    #             f'Checkpoint async save setup for step {global_step} starts at {time.time()}. - print'
++    #         )
++    #     return _cb
++
+     def _get_finalize_save_checkpoint_callback(
+         self, trainer: 'pytorch_lightning.Trainer', filepath: str, global_step: int
+     ):
+@@ -495,7 +516,14 @@ class NeMoModelCheckpoint(ModelCheckpoint):
+             if not self.async_save:
+                 return
+ 
+-            logging.info(f'Async checkpoint save for step {global_step} ({filepath}) finalized successfully.')
++            logging.info(
++                f'Async checkpoint save for step {global_step} ({filepath}) finalized successfully at {time.time()}.')
++            logging.info(
++                f'Checkpoint async save for step {global_step} ends at {time.time()}. - logging'
++            )
++            print(
++                f'Checkpoint async save for step {global_step} ends at {time.time()}. - print'
++            )
+ 
+             # Remove checkpoints marked for removal by `self._remove_checkpoint`
+             # For each finalization there is exactly one entry in self.deferred_ckpts_to_remove
