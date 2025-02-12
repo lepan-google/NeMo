@@ -15,6 +15,7 @@
 import os
 import re
 import shutil
+import time
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
@@ -457,21 +458,35 @@ class NeMoModelCheckpoint(ModelCheckpoint):
         else:
             # Async save passed the finalization function to checkpoint_io,
             # sync save calls the finalization function immediately after save.
+            setup_fn = self._get_setup_save_checkpoint_callback(
+                trainer.global_step)
             finalize_fn = self._get_finalize_save_checkpoint_callback(trainer, filepath, trainer.global_step)
             if self.async_save:
                 checkpoint_io = trainer.strategy.checkpoint_io
                 if not isinstance(checkpoint_io, AsyncFinalizableCheckpointIO):
                     raise ValueError('Async save requires async compatible CheckpointIO')
                 storage_options = dict(finalize_fn=finalize_fn)
+                storage_options = dict(
+                    finalize_fn=finalize_fn, setup_fn=setup_fn)
                 # Each upcoming ckpt removal request will be executed as part of this save finalization
                 self.deferred_ckpts_to_remove.append([])
             else:
                 storage_options = None
+            logging.info(
+                f'Checkpoint async save for step {trainer.global_step} starts at {time.time()}. - logging'
+            )
             trainer.save_checkpoint(filepath, self.save_weights_only, storage_options=storage_options)
             if self.async_save:
                 logging.info(f'Scheduled async checkpoint save for {filepath}')
             else:
                 finalize_fn()
+
+    def _get_setup_save_checkpoint_callback(self, global_step: int):
+        def _cb():
+            logging.info(
+                f'Checkpoint async save setup for step {global_step} starts at {time.time()}. - logging'
+            )
+        return _cb
 
     def _get_finalize_save_checkpoint_callback(
         self, trainer: 'pytorch_lightning.Trainer', filepath: str, global_step: int
@@ -495,7 +510,11 @@ class NeMoModelCheckpoint(ModelCheckpoint):
             if not self.async_save:
                 return
 
-            logging.info(f'Async checkpoint save for step {global_step} ({filepath}) finalized successfully.')
+            logging.info(
+                f'Async checkpoint save for step {global_step} ({filepath}) finalized successfully at {time.time()}.')
+            logging.info(
+                f'Checkpoint async save for step {global_step} ends at {time.time()}. - logging'
+            )
 
             # Remove checkpoints marked for removal by `self._remove_checkpoint`
             # For each finalization there is exactly one entry in self.deferred_ckpts_to_remove

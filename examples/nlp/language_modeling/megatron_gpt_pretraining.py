@@ -17,6 +17,7 @@ from pathlib import Path
 
 # To suppress BF16 compile related issue in the CI runs with turing/V100
 import torch._dynamo
+import time
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf, open_dict
 
@@ -44,23 +45,59 @@ def main(cfg) -> None:
     if cfg.model.get("restore_from_path") is not None:
         # Option 1: Restore only the model weights from a .nemo file
         logging.info(f"Continual training: loading weights from {cfg.model.restore_from_path}")
+        logging.info(
+            f'Checkpoint load from path {cfg.model.restore_from_path} starts at {time.time()} - logging'
+        )
+        print(
+            f'Checkpoint load from path {cfg.model.restore_from_path} starts at {time.time()} - print'
+        )
         model = MegatronGPTModel.restore_from(
             restore_path=cfg.model.restore_from_path,
             override_config_path=cfg.model,
             trainer=trainer,
             save_restore_connector=NLPSaveRestoreConnector(),
         )
+        logging.info(
+            f'Checkpoint load from path {cfg.model.restore_from_path} ends at {time.time()} - logging'
+        )
+        print(
+            f'Checkpoint load from path {cfg.model.restore_from_path} ends at {time.time()} - print'
+        )
     elif cfg.model.get("restore_from_ckpt") is not None:
         # Option 2: Restore both model weights and optimizer states from a PTL checkpoint
         logging.info(f"Continual training: loading weights and optimizer states from {cfg.model.restore_from_ckpt}")
+        logging.info(
+            f'Checkpoint load from ckpt {cfg.model.restore_from_ckpt} starts at {time.time()} - logging'
+        )
+        print(
+            f'Checkpoint load from ckpt {cfg.model.restore_from_ckpt} starts at {time.time()} - print'
+        )
         trainer.ckpt_path = Path(cfg.model.restore_from_ckpt)
         model = MegatronGPTModel(cfg.model, trainer)
+        logging.info(
+            f'Checkpoint load from ckpt {cfg.model.restore_from_ckpt} ends at {time.time()} - logging'
+        )
+        print(
+            f'Checkpoint load from ckpt {cfg.model.restore_from_ckpt} ends at {time.time()} - print'
+        )
 
     # Start new pretraining or resume from a checkpoint if it exists
     else:
         model = MegatronGPTModel(cfg.model, trainer)
 
+    logging.info(
+        f'Training starts at {time.time()} - logging'
+    )
+    print(
+        f'Training starts at {time.time()} - print'
+    )
     trainer.fit(model)
+    logging.info(
+        f'Training ends at {time.time()} - logging'
+    )
+    print(
+        f'Training ends at {time.time()} - print'
+    )
 
 
 if __name__ == '__main__':
