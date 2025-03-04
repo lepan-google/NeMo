@@ -20,6 +20,7 @@ from time import time
 from typing import Any, Dict, Optional, Union
 
 import pytorch_lightning as pl
+import torch
 from lightning_fabric.plugins import CheckpointIO
 from lightning_fabric.utilities.cloud_io import get_filesystem
 from lightning_fabric.utilities.types import _PATH
@@ -302,6 +303,7 @@ class DistributedCheckpointIO(AsyncCompatibleCheckpointIO):
         Returns:
             Dist[str, Any]: loaded checkpoint.
         """
+        logging.info("dist_ckpt_io is called.")
         if sharded_state_dict is None:
             raise ValueError('DistributedCheckpointIO requires passing sharded_state_dict argument to load_checkpoint')
         if map_location is not None:
@@ -337,13 +339,23 @@ class DistributedCheckpointIO(AsyncCompatibleCheckpointIO):
 
         logging.debug(f'Dist ckpt load strictness: {strict}')
 
-        return dist_checkpointing.load(
+        start_time = time()
+        ret = dist_checkpointing.load(
             sharded_state_dict=sharded_state_dict,
             checkpoint_dir=path,
             sharded_strategy=sharded_strategy,
             validate_access_integrity=validate_access_integrity,
             strict=strict,
         )
+        end_time = time()
+        duration = end_time - start_time
+        logging.info(
+            "Global Checkpoint Load : "
+            f"Rank : {torch.distributed.get_rank()} : "
+            f"Start time : {start_time:.3f}s : "
+            f"Time spent in load_checkpoint: {duration:.3f}s"
+        )
+        return ret
 
     def adjust_non_strict_load(self, path: _PATH, sharded_state_dict: Dict[str, Any]):
         ckpt_sharded_metadata = dist_checkpointing.load_tensors_metadata(path)

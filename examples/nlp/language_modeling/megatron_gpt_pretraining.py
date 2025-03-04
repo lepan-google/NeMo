@@ -20,6 +20,7 @@ import torch._dynamo
 import time
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf, open_dict
+import logging as _logging
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder

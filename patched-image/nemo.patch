@@ -1,26 +1,29 @@
 diff --git a/examples/nlp/language_modeling/megatron_gpt_pretraining.py b/examples/nlp/language_modeling/megatron_gpt_pretraining.py
-index 422319a38..0932080cb 100644
+index 422319a38..a42f74202 100644
 --- a/examples/nlp/language_modeling/megatron_gpt_pretraining.py
 +++ b/examples/nlp/language_modeling/megatron_gpt_pretraining.py
-@@ -17,6 +17,7 @@ from pathlib import Path
- 
+@@ -17,8 +17,10 @@ from pathlib import Path
+
  # To suppress BF16 compile related issue in the CI runs with turing/V100
  import torch._dynamo
 +import time
  import torch.multiprocessing as mp
  from omegaconf.omegaconf import OmegaConf, open_dict
- 
-@@ -26,12 +27,23 @@ from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
++import logging as _logging
+
+ from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+ from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
+@@ -26,12 +28,23 @@ from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
  from nemo.core.config import hydra_runner
  from nemo.utils import logging
  from nemo.utils.exp_manager import exp_manager
 +from pytorch_lightning.trainer.connectors.checkpoint_connector import _CheckpointConnector
- 
+
  torch._dynamo.config.suppress_errors = True
- 
+
  mp.set_start_method("spawn", force=True)
- 
- 
+
+
 +class _CustomCheckpointConnector(_CheckpointConnector):
 +    def _restore_modules_and_callbacks(self, checkpoint_path=None) -> None:
 +        logging.info(
@@ -34,14 +37,51 @@ index 422319a38..0932080cb 100644
  @hydra_runner(config_path="conf", config_name="megatron_gpt_config")
  def main(cfg) -> None:
      logging.info("\n\n************** Experiment configuration ***********")
-@@ -60,6 +72,7 @@ def main(cfg) -> None:
+@@ -60,6 +73,7 @@ def main(cfg) -> None:
      else:
          model = MegatronGPTModel(cfg.model, trainer)
- 
+
 +    trainer._checkpoint_connector = _CustomCheckpointConnector(trainer)
      trainer.fit(model)
- 
- 
+
+
+diff --git a/nemo/utils/callbacks/dist_ckpt_io.py b/nemo/utils/callbacks/dist_ckpt_io.py
+index 091075488..cf331ad56 100644
+--- a/nemo/utils/callbacks/dist_ckpt_io.py
++++ b/nemo/utils/callbacks/dist_ckpt_io.py
+@@ -20,6 +20,7 @@ from time import time
+ from typing import Any, Dict, Optional, Union
+
+ import pytorch_lightning as pl
++import torch
+ from lightning_fabric.plugins import CheckpointIO
+ from lightning_fabric.utilities.cloud_io import get_filesystem
+ from lightning_fabric.utilities.types import _PATH
+@@ -337,13 +338,23 @@ class DistributedCheckpointIO(AsyncCompatibleCheckpointIO):
+
+         logging.debug(f'Dist ckpt load strictness: {strict}')
+
+-        return dist_checkpointing.load(
++        start_time = time()
++        ret = dist_checkpointing.load(
+             sharded_state_dict=sharded_state_dict,
+             checkpoint_dir=path,
+             sharded_strategy=sharded_strategy,
+             validate_access_integrity=validate_access_integrity,
+             strict=strict,
+         )
++        end_time = time()
++        duration = end_time - start_time
++        logging.info(
++            "Global Checkpoint Load : "
++            f"Rank : {torch.distributed.get_rank()} : "
++            f"Start time : {start_time:.3f}s : "
++            f"Time spent in load_checkpoint: {duration:.3f}s"
++        )
++        return ret
+
+     def adjust_non_strict_load(self, path: _PATH, sharded_state_dict: Dict[str, Any]):
+         ckpt_sharded_metadata = dist_checkpointing.load_tensors_metadata(path)
 diff --git a/nemo/utils/callbacks/nemo_model_checkpoint.py b/nemo/utils/callbacks/nemo_model_checkpoint.py
 index 9893b0806..13c138861 100644
 --- a/nemo/utils/callbacks/nemo_model_checkpoint.py
@@ -66,11 +106,132 @@ index 9893b0806..13c138861 100644
                  logging.info(f'Scheduled async checkpoint save for {filepath}')
 @@ -496,6 +500,9 @@ class NeMoModelCheckpoint(ModelCheckpoint):
                  return
- 
+
              logging.info(f'Async checkpoint save for step {global_step} ({filepath}) finalized successfully.')
 +            logging.info(
 +                f'Checkpoint async save for step {global_step} ends at {time.time()}. - logging'
 +            )
- 
+
              # Remove checkpoints marked for removal by `self._remove_checkpoint`
              # For each finalization there is exactly one entry in self.deferred_ckpts_to_remove
+diff --git a/patched-image/build.dockerfile b/patched-image/build.dockerfile
+new file mode 100644
+index 000000000..7ce4b5520
+--- /dev/null
++++ b/patched-image/build.dockerfile
+@@ -0,0 +1,6 @@
++FROM us-central1-docker.pkg.dev/deeplearning-images/reproducibility/pytorch-gpu-nemo:latest
++
++# Move to the source code directory, then copy and apply the patch.
++WORKDIR /opt/NeMo
++COPY nemo.patch nemo.patch
++RUN git apply --reject --whitespace=fix nemo.patch
+diff --git a/patched-image/nemo.patch b/patched-image/nemo.patch
+new file mode 100644
+index 000000000..20a8b57d5
+--- /dev/null
++++ b/patched-image/nemo.patch
+@@ -0,0 +1,102 @@
++diff --git a/examples/nlp/language_modeling/megatron_gpt_pretraining.py b/examples/nlp/language_modeling/megatron_gpt_pretraining.py
++index 422319a38..a42f74202 100644
++--- a/examples/nlp/language_modeling/megatron_gpt_pretraining.py
+++++ b/examples/nlp/language_modeling/megatron_gpt_pretraining.py
++@@ -17,8 +17,10 @@ from pathlib import Path
++
++ # To suppress BF16 compile related issue in the CI runs with turing/V100
++ import torch._dynamo
+++import time
++ import torch.multiprocessing as mp
++ from omegaconf.omegaconf import OmegaConf, open_dict
+++import logging as _logging
++
++ from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
++ from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
++@@ -26,12 +28,23 @@ from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
++ from nemo.core.config import hydra_runner
++ from nemo.utils import logging
++ from nemo.utils.exp_manager import exp_manager
+++from pytorch_lightning.trainer.connectors.checkpoint_connector import _CheckpointConnector
++
++ torch._dynamo.config.suppress_errors = True
++
++ mp.set_start_method("spawn", force=True)
++
++
+++class _CustomCheckpointConnector(_CheckpointConnector):
+++    def _restore_modules_and_callbacks(self, checkpoint_path=None) -> None:
+++        logging.info(
+++            f'Checkpoint loading starts at {time.time()}.'
+++        )
+++        super()._restore_modules_and_callbacks(checkpoint_path)
+++        logging.info(
+++            f'Checkpoint loading ends at {time.time()}.'
+++        )
+++
++ @hydra_runner(config_path="conf", config_name="megatron_gpt_config")
++ def main(cfg) -> None:
++     logging.info("\n\n************** Experiment configuration ***********")
++@@ -60,6 +73,7 @@ def main(cfg) -> None:
++     else:
++         model = MegatronGPTModel(cfg.model, trainer)
++
+++    trainer._checkpoint_connector = _CustomCheckpointConnector(trainer)
++     trainer.fit(model)
++
++
++diff --git a/nemo/utils/callbacks/dist_ckpt_io.py b/nemo/utils/callbacks/dist_ckpt_io.py
++index 091075488..cf331ad56 100644
++--- a/nemo/utils/callbacks/dist_ckpt_io.py
+++++ b/nemo/utils/callbacks/dist_ckpt_io.py
++@@ -20,6 +20,7 @@ from time import time
++ from typing import Any, Dict, Optional, Union
++
++ import pytorch_lightning as pl
+++import torch
++ from lightning_fabric.plugins import CheckpointIO
++ from lightning_fabric.utilities.cloud_io import get_filesystem
++ from lightning_fabric.utilities.types import _PATH
++@@ -337,13 +338,23 @@ class DistributedCheckpointIO(AsyncCompatibleCheckpointIO):
++
++         logging.debug(f'Dist ckpt load strictness: {strict}')
++
++-        return dist_checkpointing.load(
+++        start_time = time()
+++        ret = dist_checkpointing.load(
++             sharded_state_dict=sharded_state_dict,
++             checkpoint_dir=path,
++             sharded_strategy=sharded_strategy,
++             validate_access_integrity=validate_access_integrity,
++             strict=strict,
++         )
+++        end_time = time()
+++        duration = end_time - start_time
+++        logging.info(
+++            "Global Checkpoint Load : "
+++            f"Rank : {torch.distributed.get_rank()} : "
+++            f"Start time : {start_time:.3f}s : "
+++            f"Time spent in load_checkpoint: {duration:.3f}s"
+++        )
+++        return ret
++
++     def adjust_non_strict_load(self, path: _PATH, sharded_state_dict: Dict[str, Any]):
++         ckpt_sharded_metadata = dist_checkpointing.load_tensors_metadata(path)
++diff --git a/nemo/utils/callbacks/nemo_model_checkpoint.py b/nemo/utils/callbacks/nemo_model_checkpoint.py
++index 9893b0806..13c138861 100644
++--- a/nemo/utils/callbacks/nemo_model_checkpoint.py
+++++ b/nemo/utils/callbacks/nemo_model_checkpoint.py
++@@ -15,6 +15,7 @@
++ import os
++ import re
++ import shutil
+++import time
++ from copy import deepcopy
++ from pathlib import Path
++ from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
++@@ -467,6 +468,9 @@ class NeMoModelCheckpoint(ModelCheckpoint):
++                 self.deferred_ckpts_to_remove.append([])
++             else:
++                 storage_options = None
+++            logging.info(
+++
+\ No newline at end of file
