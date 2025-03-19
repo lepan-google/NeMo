@@ -544,7 +544,11 @@ class NeMoModelCheckpoint(ModelCheckpoint):
             else:
                 storage_options = None
             logging.info(
+<<<<<<< HEAD
                 f'Checkpoint async save for step {trainer.global_step} starts at {time.time()}.'
+=======
+                f'Checkpoint save for step {trainer.global_step} started at {time.time()}.'
+>>>>>>> 99b932227 (Add logs for checkpoint saving start and finalization)
             )
             trainer.save_checkpoint(filepath, self.save_weights_only, storage_options=storage_options)
             if self.async_save:
